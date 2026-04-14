@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const querystring = require('querystring');
 const path = require('path');
+const { exec } = require('child_process');
 require('dotenv').config();
 
 const app = express();
@@ -12,9 +13,46 @@ const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 const REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI;
 
 app.use(express.static(path.join(__dirname, '..')));
+app.use(express.json());
+
+function getMoodFromML(message) {
+    return new Promise((resolve, reject) => {
+        const escapedMessage = message.replace(/"/g, '\\"');
+        const scriptPath = path.join(__dirname, '..', 'ml', 'model.py');
+
+        exec(`python3 "${scriptPath}" "${escapedMessage}"`, (error, stdout, stderr) => {
+            if (error) {
+                return reject(error);
+            }
+
+            if (stderr && stderr.trim()) {
+                console.warn('ML warning:', stderr.trim());
+            }
+
+            const predictedMood = stdout.trim();
+            resolve(predictedMood || 'relaxed');
+        });
+    });
+}
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '..', 'index.html'));
+});
+
+app.post('/api/mood', async (req, res) => {
+    const message = req.body?.message;
+
+    if (!message || typeof message !== 'string') {
+        return res.status(400).json({ error: 'Message is required' });
+    }
+
+    try {
+        const mood = await getMoodFromML(message);
+        res.json({ mood });
+    } catch (error) {
+        console.error('Error running ML mood detection:', error.message);
+        res.status(500).json({ error: 'Failed to detect mood' });
+    }
 });
 
 app.get('/api/auth/spotify', (req, res) => {
